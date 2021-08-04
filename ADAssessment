@@ -1,0 +1,747 @@
+    
+    [CmdletBinding()]
+    Param(
+        [Parameter(Mandatory=$true)]
+        [string]
+        $PathSave,
+
+    )
+    $PathSave = "."
+    ########################### Object ##########################################################################
+    $CompanyInfoTable = New-Object 'System.Collections.Generic.List[System.Object]'   
+    $alluserstable = New-Object 'System.Collections.Generic.List[System.Object]'   
+    $lastlogon90day = New-Object 'System.Collections.Generic.List[System.Object]'  
+    $userneverexpire = New-Object 'System.Collections.Generic.List[System.Object]'  
+    $CannotChangePwd = New-Object 'System.Collections.Generic.List[System.Object]'  
+    $allComputersTable = New-Object 'System.Collections.Generic.List[System.Object]'  
+    $servernoexclusioprotect = New-Object 'System.Collections.Generic.List[System.Object]'  
+    $pclastlogon90day = New-Object 'System.Collections.Generic.List[System.Object]'  
+    $computersindefaultou = New-Object 'System.Collections.Generic.List[System.Object]'  
+    $allGPOTable = New-Object 'System.Collections.Generic.List[System.Object]'  
+    $allgroupstable = New-Object 'System.Collections.Generic.List[System.Object]'  
+    $DomainAdminTable = New-Object 'System.Collections.Generic.List[System.Object]'
+    $pwdageday = New-Object 'System.Collections.Generic.List[System.Object]'    
+    $userpwdnotrequired = New-Object 'System.Collections.Generic.List[System.Object]'
+    $TableSubnet = New-Object 'System.Collections.Generic.List[System.Object]'
+
+    ########################### Validate Parameter $Domain ################################################################
+     $allusers = @(Get-ADUser -filter * -Properties SamAccountName, LockedOut, Enabled, AccountExpirationDate, LastLogonDate, PasswordLastSet, pwdLastSet, CanonicalName,
+     PwdLastSet, msDS-UserPasswordExpiryTimeComputed,PwdLastSet,PasswordNeverExpires,CannotChangePassword,useraccountcontrol,sid)
+
+     $replicatiostatus = Get-ADReplicationPartnerMetadata -Scope Domain | Select-Object Server, LastReplicationAttempt, LastReplicationSuccess
+
+     $ADInfo = Get-ADDomain
+     $ForestObj = Get-ADForest
+     $ADip = Get-ADDomainController -Filter * | Select-Object Hostname,Ipv4address, site
+ 
+    ########################### Company Information ##########################################################
+
+    $Forest = $ADInfo.Forest
+    $InfrastructureMaster = $ADInfo.InfrastructureMaster
+    $RIDMaster = $ADInfo.RIDMaster
+    $PDCEmulator = $ADInfo.PDCEmulator
+    $DomainNamingMaster = $ForestObj.DomainNamingMaster
+    $SchemaMaster = $ForestObj.SchemaMaster
+    $DomainName = $ADInfo.DNSRoot
+    $DomainMode = $ADInfo.Mode
+    $DomainForest = $ForestObj.ForestMode
+      
+    $obj = [PSCustomObject]@{
+
+        'Domain'			    = $Forest
+        'AD Recycle Bin'	    = $ADRecycleBin
+        'Infrastructure Master' = $InfrastructureMaster
+        'RID Master'		    = $RIDMaster
+        'PDC Emulator'		    = $PDCEmulator
+        'Domain Naming Master'  = $DomainNamingMaster
+        'Schema Master'		    = $SchemaMaster
+        'Domain Name'           = $DomainName
+        'Domain Forest'         = $DomainForest
+        'Domain Mode'           = $DomainMode
+    }
+    $CompanyInfoTable.Add($obj)
+    
+    ########################### All Users ############################################################
+    foreach ($User in $AllUsers)
+    {
+        $AttVar = $User |Select-Object SamAccountName, LockedOut, PasswordExpired, Enabled, PasswordLastSet, AccountExpirationDate, LastLogonDate, CanonicalName, msDS-UserPasswordExpiryTimeComputed, 
+        PwdLastSet, PasswordNeverExpires, CannotChangePassword, @{Name="Password Expiration Date";Expression={[datetime]::FromFileTime($_."msDS-UserPasswordExpiryTimeComputed")}}, 
+        @{Name="PassWord Age (Days)";Expression={if($_.PwdLastSet -ne 0){(new-TimeSpan([datetime]::FromFileTimeUTC($_.PwdLastSet)) $(Get-Date)).days}else{0}}},useraccountcontrol
+
+        $Name = $User.SamAccountName
+        $LockedOut = $User.LockedOut
+        $Enabled = $User.Enabled
+        #$SidUser = $USer.sid
+        $AccountExpiration = $User.AccountExpirationDate
+        $LastLogon = $User.LastLogonDate
+        $PasswordExpired = $AttVar.PasswordExpired
+        $Parentcontainer = $User.CanonicalName
+        $pwdage = $AttVar.'PassWord Age (Days)'
+        $pwddate = $AttVar.'Password Expiration Date'
+        $pwdlastchange = $User.PasswordLastSet
+        $PasswordNeverExpires = $AttVar.PasswordNeverExpires
+        $usercannotchange = $AttVar.CannotChangePassword
+        $useraccountcontrol = $User.useraccountcontrol
+
+            $obj = [PSCustomObject]@{
+                
+                'Name'				                    = $Name
+                'Account Is Locked Out'                 = $LockedOut
+                'Enabled'				                = $Enabled
+                #'SID'                                   = $SidUser    
+                'Expiration Date'	                    = $AccountExpiration
+                'Last Logon Date'		                = $LastLogon
+                'Must Change Password At Next Logon'    = $PasswordExpired
+                'Parent Container (Reversed)'           = $Parentcontainer
+                'Password Age (Days)'                   = $pwdage
+                'Password Expiration Date'              = $pwddate
+                'Password Last Changed'                 = $pwdlastchange
+                'Password Never Expires'                = $PasswordNeverExpires
+                'User Cannot Change Password'           = $usercannotchange
+            }
+
+            $alluserstable.Add($obj)
+
+        ########################### Users Not Logon >90 days ################################################
+        
+        if (($User.Enabled -eq $True) -and ($AttVar.LastLogonDate -lt ((Get-Date).AddDays(-90))) -and ($User.LastLogonDate -ne $NULL))
+
+        {
+            
+            $obj = [PSCustomObject]@{
+                
+                'Name'				                    = $Name
+                'Account Is Locked Out'                 = $LockedOut
+                'Enabled'				                = $Enabled
+                #'SID'                                   = $SidUser    
+                'Expiration Date'	                    = $AccountExpiration
+                'Last Logon Date'		                = $LastLogon
+                'Must Change Password At Next Logon'    = $PasswordExpired
+                'Parent Container (Reversed)'           = $Parentcontainer
+                'Password Age (Days)'                   = $pwdage
+                'Password Expiration Date'              = $pwddate
+                'Password Last Changed'                 = $pwdlastchange
+                'Password Never Expires'                = $PasswordNeverExpires
+                'User Cannot Change Password'           = $usercannotchange
+            }
+            
+            $lastlogon90day.Add($obj)
+        }
+        ########################### Users with Password Never Expire ####################################
+
+        if (($User.Enabled -eq $True) -and ($AttVar.PasswordNeverExpires -eq $True))
+
+        {
+            
+            $obj = [PSCustomObject]@{
+                
+                'Name'				                    = $Name
+                'Account Is Locked Out'                 = $LockedOut
+                'Enabled'				                = $Enabled
+                #'SID'                                   = $SidUser    
+                'Expiration Date'	                    = $AccountExpiration
+                'Last Logon Date'		                = $LastLogon
+                'Must Change Password At Next Logon'    = $PasswordExpired
+                'Parent Container (Reversed)'           = $Parentcontainer
+                'Password Age (Days)'                   = $pwdage
+                'Password Expiration Date'              = $pwddate
+                'Password Last Changed'                 = $pwdlastchange
+                'Password Never Expires'                = $PasswordNeverExpires
+                'User Cannot Change Password'           = $usercannotchange
+            }
+            
+            $userneverexpire.Add($obj)
+        }
+
+        ########################### Users Cannot change password #######################################
+
+        if (($User.Enabled -eq $True) -and ($AttVar.CannotChangePassword -eq $true))
+
+        {
+            
+            $obj = [PSCustomObject]@{
+                
+                'Name'				                    = $Name
+                'Account Is Locked Out'                 = $LockedOut
+                'Enabled'				                = $Enabled
+                #'SID'                                   = $SidUser    
+                'Expiration Date'	                    = $AccountExpiration
+                'Last Logon Date'		                = $LastLogon
+                'Must Change Password At Next Logon'    = $PasswordExpired
+                'Parent Container (Reversed)'           = $Parentcontainer
+                'Password Age (Days)'                   = $pwdage
+                'Password Expiration Date'              = $pwddate
+                'Password Last Changed'                 = $pwdlastchange
+                'Password Never Expires'                = $PasswordNeverExpires
+                'User Cannot Change Password'           = $usercannotchange
+            }
+            
+            $CannotChangePwd.Add($obj)
+        }    
+        ########################### Users password age > 90 days #######################################
+        if (($User.Enabled -eq $True) -and ($pwdage -gt 90))
+
+        {
+            
+            $obj = [PSCustomObject]@{
+                
+                'Name'				                    = $Name
+                'Account Is Locked Out'                 = $LockedOut
+                'Enabled'				                = $Enabled
+                #'SID'                                   = $SidUser    
+                'Expiration Date'	                    = $AccountExpiration
+                'Last Logon Date'		                = $LastLogon
+                'Must Change Password At Next Logon'    = $PasswordExpired
+                'Parent Container (Reversed)'           = $Parentcontainer
+                'Password Age (Days)'                   = $pwdage
+                'Password Expiration Date'              = $pwddate
+                'Password Last Changed'                 = $pwdlastchange
+                'Password Never Expires'                = $PasswordNeverExpires
+                'User Cannot Change Password'           = $usercannotchange
+            }
+            
+            $pwdageday.Add($obj)
+        }
+
+         ########################### Users Not Requerid Password #######################################
+        if (($User.useraccountcontrol -eq 32) -or ($User.useraccountcontrol -eq 544))
+
+        {
+            
+            $obj = [PSCustomObject]@{
+                
+                'Name'				                    = $Name
+                'Enabled'				                = $Enabled
+                #'SID'                                   = $SidUser    
+                'User Account Control'                  = $useraccountcontrol 
+                'Expiration Date'	                    = $AccountExpiration
+                'Last Logon Date'		                = $LastLogon
+                'Must Change Password At Next Logon'    = $PasswordExpired
+                'Parent Container (Reversed)'           = $Parentcontainer
+                'Password Age (Days)'                   = $pwdage
+                'Password Expiration Date'              = $pwddate
+                'Password Last Changed'                 = $pwdlastchange
+                'Password Never Expires'                = $PasswordNeverExpires
+                'User Cannot Change Password'           = $usercannotchange
+            }
+            
+            $userpwdnotrequired.Add($obj)
+        } 
+    }
+
+    ########################### All Computers ###########################################################
+      
+    $Computers = Get-ADComputer -Filter * -Properties *
+
+    #Only search for versions of windows that exist in the Environment
+    $WindowsRegex = "(Windows (Server )?(\d+|XP)?( R2)?).*"
+    $OsVersions = $Computers | Select-Object OperatingSystem -unique | ForEach-Object {
+
+        if ($_.OperatingSystem -match $WindowsRegex ){ 
+            return $matches[1]
+        } elseif ($_.OperatingSystem -ne $null) {
+            return $_.OperatingSystem
+        }
+    } | Select-Object -unique | Sort-Object
+
+    $OsObj = [PSCustomObject]@{}
+
+    $OsVersions | ForEach-Object {
+
+    $OsObj | Add-Member -Name $_ -Value 0 -Type NoteProperty
+    }
+
+    foreach ($Computer in $Computers)
+    {
+        $obj = [PSCustomObject]@{
+            
+            'Name' = $Computer.Name
+            'Enabled' = $Computer.Enabled
+            #'SID'     = $Computer.sid
+            'IP' = $Computer.IPv4Address
+            'DNS Host Name' = $Computer.DNSHostName
+            'Last Logon Date' = $Computer.LastLogonDate
+            'Operating System' = $Computer.OperatingSystem
+            'Parent Container (Reversed)' = $Computer.CanonicalName
+            'Protect from Deletion' = $Computer.ProtectedFromAccidentalDeletion
+        }
+
+        $allComputersTable.Add($obj)
+
+        ########################### Servers Exclusion Protection Disabled ################################################
+        if (($Computer.OperatingSystem -like '*server*') -and ($Computer.ProtectedFromAccidentalDeletion -eq $False))
+
+        {
+            $obj = [PSCustomObject]@{
+                
+                'Name' = $Computer.Name
+                'Enabled' = $Computer.Enabled
+                #'SID'     = $Computer.sid
+                'IP' = $Computer.IPv4Address
+                'DNS Host Name' = $Computer.DNSHostName
+                'Last Logon Date' = $Computer.LastLogonDate
+                'Operating System' = $Computer.OperatingSystem
+                'Parent Container (Reversed)' = $Computer.CanonicalName
+                'Protect from Deletion' = $Computer.ProtectedFromAccidentalDeletion
+            }
+            $servernoexclusioprotect.Add($obj)
+        }
+
+        ########################### Computers Logon > 90 days #######################################################
+        if (($Computer.Enabled -eq $True) -and ($Computer.LastLogonDate -lt (Get-Date).AddDays(-90)) -and ($Computer.LastLogonDate -ne $NULL))
+
+        {
+            $obj = [PSCustomObject]@{
+            
+                'Name' = $Computer.Name
+                'Enabled' = $Computer.Enabled
+                #'SID'     = $Computer.sid
+                'IP' = $Computer.IPv4Address
+                'DNS Host Name' = $Computer.DNSHostName
+                'Last Logon Date' = $Computer.LastLogonDate
+                'Operating System' = $Computer.OperatingSystem
+                'Parent Container (Reversed)' = $Computer.CanonicalName
+                'Protect from Deletion' = $Computer.ProtectedFromAccidentalDeletion
+            }
+            $pclastlogon90day.Add($obj)
+        }
+    }
+    
+    ########################### Computers in Default OU ######################################################
+      
+    $DefaultComputersOU = (Get-ADDomain).computerscontainer
+    $DefaultComputers = Get-ADComputer -Filter * -Properties * -SearchBase "$DefaultComputersOU"
+	
+    foreach ($DefaultComputer in $DefaultComputers)
+    {
+        if ($Computer.OperatingSystem -like '*server*'){
+
+            $obj = [PSCustomObject]@{
+                
+                'Name' = $DefaultComputer.Name
+                'Enabled' = $DefaultComputer.Enabled
+                #'SID'     = $DefaultComputer.sid
+                'IP' = $DefaultComputer.IPv4Address
+                'DNS Host Name' = $DefaultComputer.DNSHostName
+                'Last Logon Date' = $DefaultComputer.LastLogonDate
+                'Operating System' = $DefaultComputer.OperatingSystem
+                'Parent Container (Reversed)' = $DefaultComputer.CanonicalName
+                'Protect from Deletion' = $DefaultComputer.ProtectedFromAccidentalDeletion
+            }
+            $computersindefaultou.Add($obj)
+        }    
+    }
+    
+    ########################### AD Update Missing ######################################################
+   
+    $DC = (Get-ADDomain).DomainControllersContainer
+    $DomainController = Get-ADComputer -Filter * -Properties * -SearchBase "$DC"
+	
+    foreach ($AD in $DomainController.name) {
+
+        $UpdateSession = New-Object -ComObject Microsoft.Update.Session
+        $UpdateSearcher = $UpdateSession.CreateupdateSearcher()
+        $Updates = @($UpdateSearcher.Search("IsHidden=0 and IsInstalled=0").Updates)
+        $ADUpdates = $Updates | Select-Object -Property @{Name="Name";Expression={$AD.Name}},Title, Description, SupportUrl
+	}
+    ########################### All GPO  ###############################################################
+
+    $AllGpos = Get-GPO -All
+
+    $GpoVersionInfo = foreach ($g in $AllGpos) {
+        [xml]$Gpo = Get-GPOReport -ReportType Xml -Guid $g.Id
+        foreach ($i in $Gpo.GPO.LinksTo) {
+            [PSCustomObject]@{
+                "Display Name" = $Gpo.GPO.Name
+                "Computer Version" = $Gpo.GPO.Computer.VersionDirectory
+                "User Version" = $Gpo.GPO.User.VersionDirectory
+                "Creation Date" = $Gpo.GPO.CreatedTime
+                "Modification Date" = $Gpo.GPO.ModifiedTime
+                "Parent Container (Reversed)" = $i.SOMPath
+                "Link Enabled" = $i.Enabled
+                "Status" = $g.GpoStatus
+            }
+        }
+    }
+    $allGPOTable = $GpoVersionInfo
+
+    ########################### Script Found in GPO ##################################################
+
+    $gposcript = New-Object 'System.Collections.Generic.List[System.Object]'
+    $allgpos = get-gpo -All
+
+    foreach($g in $allgpos){
+
+        [xml]$gpos = Get-GPOReport -ReportType XML -Guid $g.Id
+        $userScripts = @($gpos.GPO.User.ExtensionData | Where-Object {$_.Name -eq 'Scripts'})
+        If ($userScripts.count -gt 0) {
+            $userScripts.extension.Script | ForEach {
+            
+                $obj = [PSCustomObject]@{
+
+                    GPOName = $g.DisplayName
+                    ID = $g.ID
+                    GPOState = $g.GpoStatus
+                    GPOType = 'User'
+                    Type = $_.Type
+                    Script = $_.command
+                    ScriptType = $_.command -replace '.*\.(.*)','$1'
+                }
+                $gposcript.Add($obj)
+            }
+        }
+    }
+    ########################### Password Found in GPO ##################################################
+    $pwdfoundgpo = New-Object 'System.Collections.Generic.List[System.Object]'
+    
+    $Items = Get-ChildItem "\\$DomainName\SYSVOL\*\Policies" -recurse -Filter *.xml 
+    foreach ($XMLFileName in $Items){ 
+        
+        [string]$XMLContent = Get-content ($XMLFileName.FullName) 
+            
+        if($XMLContent.Contains("cpassword")){ 
+                                            
+            [string]$Cpassword = [regex]::matches($XMLContent,'(cpassword=).+?(?=\")')
+            [string] $UserName = [regex]::matches($XMLContent,'(userName=).+?(?=\")')
+
+            $Cpassword = $Cpassword.split('(\")')[1]             
+            $UserName = $UserName.split('(\")')[1]
+                
+            if($Cpassword){ 
+
+                $Mod = ($Cpassword.length % 4)          
+                switch ($Mod) { 
+                    '1' {$Cpassword = $Cpassword.Substring(0,$Cpassword.Length -1)} 
+                    '2' {$Cpassword += ('=' * (4 - $Mod))} 
+                    '3' {$Cpassword += ('=' * (4 - $Mod))} 
+                }         
+                $Base64Decoded = [Convert]::FromBase64String($Cpassword) 
+                $AesObject = New-Object System.Security.Cryptography.AesCryptoServiceProvider 
+                        
+                [Byte[]] $AesKey = @(0x4e,0x99,0x06,0xe8,0xfc,0xb6,0x6c,0xc9,0xfa,0xf4,0x93,0x10,0x62,0x0f,0xfe,0xe8, 
+                                     0xf4,0x96,0xe8,0x06,0xcc,0x05,0x79,0x90,0x20,0x9b,0x09,0xa4,0x33,0xb6,0x6c,0x1b) 
+                $AesIV = New-Object Byte[]($AesObject.IV.Length)  
+                $AesObject.IV = $AesIV 
+                $AesObject.Key = $AesKey 
+                $DecryptorObject = $AesObject.CreateDecryptor()  
+                [Byte[]] $OutBlock = $DecryptorObject.TransformFinalBlock($Base64Decoded, 0, $Base64Decoded.length) 
+                        
+                $Password = [System.Text.UnicodeEncoding]::Unicode.GetString($OutBlock)                 
+                [string]$GPOguid = [regex]::matches($XMLFileName.DirectoryName,'(?<=\{).+?(?=\})') 
+                $GPODetail = Get-GPO -guid $GPOguid 
+                                              
+                $obj = [PSCustomObject]@{
+            
+                     'Name'     = $GPODetail.DisplayName
+                     'Username' = $UserName
+                     'Password' = $Password
+                     'XML File' = $XMLFileName
+                }   
+                
+                $pwdfoundgpo.Add($obj)                  
+            }         
+        }   
+    } 
+    ########################### All OUS #############################################################
+    $allOUTable = New-Object 'System.Collections.Generic.List[System.Object]'
+    $emptyou = New-Object 'System.Collections.Generic.List[System.Object]'
+
+    $OUs = Get-ADOrganizationalUnit  -Properties CanonicalName,ProtectedFromAccidentalDeletion -Filter * | Sort-Object CanonicalName
+
+    foreach ($OU in $OUs){
+
+	    $LinkedGPOs = New-Object 'System.Collections.Generic.List[System.Object]'  
+	    $oname = Split-Path $OU.CanonicalName -Leaf
+        $gpolinked = if (@(Get-ADOrganizationalUnit -Filter * -SearchBase $OU.DistinguishedName | Select-object -ExpandProperty LinkedGroupPolicyObjects)) {"TRUE"} ELSE {"FALSE"}
+        $numberchild = (@(Get-AdComputer -Filter * -SearchBase $OU.DistinguishedName -SearchScope OneLevel).Count + @(Get-AdGroup -Filter * -SearchBase $OU.DistinguishedName -SearchScope OneLevel).Count + @(Get-AdUser -Filter * -SearchBase $OU.DistinguishedName -SearchScope OneLevel).Count)
+        $canonical = $OU.CanonicalName
+        $ouprotect = $OU.ProtectedFromAccidentalDeletion        
+	    $GPOslinks= $OU.LinkedGroupPolicyObjects 
+	
+	    foreach ($GPOlink in $GPOslinks) {
+
+	        $Link1 = $GPOlink -split "{" | Select-Object -Last 1 
+	        $Link2 = $Link1 -split "}" | Select-Object -First 1
+	        $LinkedGPOs.Add((Get-GPO -Guid $Link2 -ErrorAction SilentlyContinue).DisplayName)
+	
+	    }
+	    $LinkedGPOs = $LinkedGPOs -join ", "
+        $obj = [pscustomobject]@{
+            "Name"          = $oname
+            "Has GPO Linked" = $gpolinked
+            "Number Of Child Objects (All)" = $numberchild
+            "Linked GPOs" = $LinkedGPOs
+            "Parent Container (Reversed)" = $canonical
+            "Protected From Accidental Deletion" = $ouprotect
+        }
+
+        $allOUTable.Add($obj)
+
+        ########################### Empty OUS #############################################################
+        if ($numberchild -eq 0) {
+            $obj = [pscustomobject]@{
+                "Name"          = $oname
+                "Has GPO Linked" = $gpolinked
+                "Number Of Child Objects (All)" = $numberchild
+                "Linked GPOs" = $LinkedGPOs
+                "Parent Container (Reversed)" = $canonical
+                "Protected From Accidental Deletion" = $ouprotect
+            }
+            $emptyou.Add($obj)
+        }
+    }
+    ########################### Active Directory Groups #############################################
+
+    $Groups = Get-ADGroup -Filter * -Properties Name, Members,CanonicalName,ProtectedFromAccidentalDeletion
+	
+    foreach ($Group in $Groups)
+    {
+        $obj = [PSCustomObject]@{
+            
+            'Name' = $Group.name
+            'Number Of Direct Members' = $Group.Members.Count
+            'Parent Container (Reversed)' = $Group.CanonicalName
+            'Protected from Deletion' = $Group.ProtectedFromAccidentalDeletion
+            'SID'  = $Group.sid
+        }
+
+        $allgroupstable.Add($obj)
+    }
+
+    ########################### Get Domain Admins ############################################################
+    
+    $DomainAdminMembers = Get-ADGroupMember "Domain Admins" 
+   
+        foreach ($DomainAdminMember in $DomainAdminMembers.SamAccountName)
+        {
+
+            $Member = $DomainAdminMember | Get-ADUser -Properties SamAccountName, LockedOut, Enabled, Mail, LastLogonDate, PasswordLastSet, CanonicalName, PwdLastSet,PwdLastSet,PasswordNeverExpires,sid
+
+            $Name = $Member.SamAccountName
+            $Enabled = $Member.Enabled
+            $Sidadminuser = $Member.sid
+            $Clockedout = $Member.LockedOut
+            $Container = $Member.CanonicalName
+            $pwdage2 = $Member | Select-Object @{Name="PassWord Age (Days)";Expression={if($_.PwdLastSet -ne 0){(new-TimeSpan([datetime]::FromFileTimeUTC($_.PwdLastSet)) $(Get-Date)).days}else{0}}}
+            $pwdlastchange2 = $Member.PasswordLastSet
+            $PasswordNeverExpires2 = $Member.PasswordNeverExpires
+
+                $obj = [PSCustomObject]@{
+            
+                'Name'    = $Name
+                'Account Is Locked Out' = $Clockedout
+                'Enabled' = $Enabled
+                #'SID'   = $Sidadminuser
+                'Last Logon Date' = $Member.LastLogonDate
+                'Parent Container' = $Container
+                'Password Age (Days)' = $pwdage2.'PassWord Age (Days)'
+                'Password Last Changed' = $pwdlastchange2
+                'Password Never Expires' = $PasswordNeverExpires2
+            }
+            $DomainAdminTable.Add($obj)
+        }
+    ######################### Result Subnet ###################################################################
+    $sites = Get-ADReplicationSubnet -Filter * | Select-Object Name, Site, Location
+	        
+    foreach ($site in $sites)
+    {
+        $obj = [PSCustomObject]@{
+
+            'Site' = $Site.Site.Split(',')[0].Trim('CN=')
+            'Subnet' = $Site.Name 
+	    }
+	    $TableSubnet.Add($obj)
+    }
+   ######################### Sites ###########################################################################
+    $allSites = Get-ADReplicationSite -Filter * -Properties * | Select-Object Name, Location, CanonicalName
+
+    ######################### Backup Status ###################################################################
+    if (($textbox3.text) -and ($textbox4.text)){
+        $domains = (Get-ADForest).Domains
+        $domainControllers = ($domains | foreach { Get-ADDomainController -Server $_ -Filter * }).HostName
+        $output = $domainControllers | foreach {
+        $backups = Invoke-Command -Session (Get-PSSession) -Scriptblock {repadmin.exe /showbackup $_}
+        $output = @{ 'DomainController' = $_ }
+            for ($i = 0; $i -lt $backups.Count; $i++) {
+                if ($backups[$i] -match '^(CN|DC)') {
+                    $output.Partition = $backups[$i]
+                    $output.DateTime = [regex]::Match($backups[$i +2],'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})').Groups[1].Value
+                    [pscustomobject]$output
+                }
+            }
+        
+        }
+    }
+    else {
+        $domains = (Get-ADForest).Domains
+        $domainControllers = ($domains | foreach { Get-ADDomainController -Server $_ -Filter * }).HostName
+        $output = $domainControllers | foreach {
+        $backups = repadmin.exe /showbackup $_
+        $output = @{ 'DomainController' = $_ }
+           for ($i = 0; $i -lt $backups.Count; $i++) {
+                if ($backups[$i] -match '^(CN|DC)') {
+                    $output.Partition = $backups[$i]
+                    $output.DateTime = [regex]::Match($backups[$i +2],'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})').Groups[1].Value
+                    [pscustomobject]$output
+                }
+            }
+        
+        }
+    }
+    
+    ######################### SMB Share ######################################################################
+
+    $sharetable = New-Object 'System.Collections.Generic.List[System.Object]'
+
+    $domains = (Get-ADForest).Domains
+    $domainControllers = ($domains | ForEach-Object { Get-ADDomainController -Server $_ -Filter * }).HostName
+
+    foreach($ad in $domainControllers){
+        $shares = Get-SmbShare
+            
+        foreach($share in $shares){
+            
+            $shareaccess = Get-SmbShareAccess -Name $share.Name
+
+            $obj = [PSCustomObject]@{
+
+                Computer = $ad
+                Share = $share.Name
+                IsEveryoneAllowed = if($shareaccess.AccountName -contains 'Everyone'){'TRUE'}else{'FALSE'}
+                TypeAccess = ($shareaccess  | Where-Object {$_.AccountName -eq 'Everyone'}).AccessRight
+            }
+            $sharetable.Add($obj)
+        }
+    }
+
+    ######################### SMB check signature and smbv1 are enabled ######################################################################
+    $smb = New-Object 'System.Collections.Generic.List[System.Object]'
+    $domains = (Get-ADForest).Domains
+    $domainControllers = ($domains | ForEach-Object { Get-ADDomainController -Server $_ -Filter * }).HostName
+        
+    ForEach ($ad in $domainControllers) {
+        $smbs =  Get-SmbServerConfiguration
+
+        $obj = [PSCustomObject]@{
+
+            'Computer' = $ad
+            'SMBv1 Enabled'= $smbs.EnableSMB1Protocol
+            'SMBSignature Enabled' = $smbs.RequireSecuritySignature
+        }
+        $smb.Add($obj)
+    }
+    ########################## Export Domain Policy ##########################################################
+        
+    $output1 = $PathSave + "\" + "Domain_Policy.html"
+
+    $Result14 = Get-GPO -Name "Default Domain Policy" | Get-GPOReport -ReportType HTML >> $output1
+
+	########################## Export GPO with Password Policy ##########################################################
+    $pwdPOLICY = New-Object 'System.Collections.Generic.List[System.Object]'    
+    $INFItems = Get-ChildItem "\\$DomainName\SYSVOL\*\Policies" -recurse -Filter *.inf
+    foreach ($INFFileName in $INFItems){ 
+        
+        [string]$INFContent = Get-content ($INFFileName.FullName) 
+            
+        if($INFContent.Contains("System Access")){ 
+
+                [string]$GPOguid = [regex]::matches($INFFileName.DirectoryName,'(?<=\{).+?(?=\})') 
+                $GPODetail = Get-GPO -guid $GPOguid 
+		        [string]$PasswordHistorySize = [regex]::matches($INFContent,'(PasswordHistorySize =).+?(?=\")')
+                [string]$MaximumPasswordAge = [regex]::matches($INFContent,'(MaximumPasswordAge =).+?(?=\")')     
+                [string]$MinimumPasswordLength = [regex]::matches($INFContent,'(MinimumPasswordLength =).+?(?=\")')     
+                [string]$MinimumPasswordAge = [regex]::matches($INFContent,'(MinimumPasswordAge =).+?(?=\")')     
+                [string]$PasswordComplexity = [regex]::matches($INFContent,'(PasswordComplexity =).+?(?=\")')     
+                [string]$LockoutBadCount = [regex]::matches($INFContent,'(LockoutBadCount =).+?(?=\")')     
+                [string]$ResetLockoutCount = [regex]::matches($INFContent,'(ResetLockoutCount =).+?(?=\")')                                       
+                [string]$LockoutDuration = [regex]::matches($INFContent,'(LockoutDuration =).+?(?=\")')
+                                           
+                $obj = [PSCustomObject]@{
+                'GPO Name' = $GPODetail.DisplayName
+            	'Enforce password history' = $PasswordHistorySize.split('( = )')[3]
+		        'Maximum password age' = $MaximumPasswordAge.split('( = )')[3]
+		        'Minimum password length' = $MinimumPasswordLength.split('( = )')[3]
+                'Minimum password age' = $MinimumPasswordAge.split('( = )')[3]
+                'Password must meet complexity requirements' = $PasswordComplexity.split('( = )')[3]
+                'Account lockout threshold' = $LockoutBadCount.split('( = )')[3]
+                'Reset account lockout counter after' = $ResetLockoutCount.split('( = )')[3]
+		        'Account lockout duration' = $LockoutDuration.split('( = )')[3]
+
+                }
+                $pwdPOLICY.Add($obj)
+                                  
+            }         
+        }
+
+    ########################## Export Audit Policy ##########################################################
+
+    auditpol /get /category:* >> "$Pathsave\AuditPolicy.txt"
+    W32tm /monitor /domain:$DomainName >> "$Pathsave\Time_sync.txt"
+    (Get-ADRootDSE).namingContexts >> "$Pathsave\domain_info.txt"
+    $replicatiostatus >> "$Pathsave\replication_status.txt"
+    $ADTrust = Get-ADTrust -Filter * | Select-Object Name, TrustType, TrustAttributes, Direction, SIDFilteringQuarantined
+    #Get-WindowsFeature >> "$Pathsave\windows_feature.txt"
+
+    ######################################## Time Sync Result #########################################################
+    $ResultNTP = New-Object 'System.Collections.Generic.List[System.Object]'
+    $DC = (Get-ADDomain).DomainControllersContainer
+    $Domaincontrollers = Get-ADComputer -Filter * -Properties * -SearchBase "$DC"
+    
+    foreach ($Domaincontroller in $Domaincontrollers.name)
+    {
+        $ntps = w32tm /query /computer:$Domaincontroller /source
+        $obj = [PSCustomObject]@{
+            'Computer Name' = $Domaincontroller
+            'NTP Source' = $ntps
+        }
+        $ResultNTP.Add($obj)
+    }
+    ########################## Users with ADminsholder Orphaned ##########################################################
+    $adminsholder = New-Object 'System.Collections.Generic.List[System.Object]'
+    $AdminUsers = Get-ADUser -LDAPFilter "(adminCount=1)" -properties *
+    $AdminGrp = Get-ADGroup -LDAPFilter "(adminCount=1)"
+    $Admins = ForEach ($Grp in $AdminGrp) {Get-ADGroupMember $Grp | Where-Object {$_.ObjectClass -eq "User"}}
+
+    ForEach ($User in $AdminUsers) {
+
+        $obj = [PSCustomObject]@{
+
+            Name = $User.SamAccountName
+            Enabled = $User.Enabled
+            Orphaned = If ($Admins -Match $User.Name){'FALSE'}else{'TRUE'}
+            'Parent Container (Reversed)' = $User.CanonicalName
+        }
+        $adminsholder.Add($obj)
+    }
+ 
+    ########################## Export to CSV all Results ######################################################
+    $alluserstable | Export-Csv "$pathsave\all_users.csv" -NoTypeInformation 
+    $CompanyInfoTable | Export-Csv "$pathsave\company_information.csv" -NoTypeInformation
+    $userneverexpire | Export-Csv "$pathsave\pwd_never_expire.csv" -NoTypeInformation
+    $lastlogon90day| Export-Csv "$pathsave\last_logon_maior_90dias.csv" -NoTypeInformation
+    $CannotChangePwd | Export-Csv "$pathsave\pwd_cannot_changed.csv" -NoTypeInformation
+    $allComputersTable | Export-Csv "$pathsave\all_computers.csv" -NoTypeInformation
+    $pwdageday | Export-Csv "$pathsave\pwd_age.csv" -NoTypeInformation
+    $computersindefaultou | Export-Csv "$pathsave\computer_default_ou.csv" -NoTypeInformation
+    $servernoexclusioprotect | Export-Csv "$pathsave\server_no_exclusion_protect.csv" -NoTypeInformation
+    $pclastlogon90day | Export-Csv "$pathsave\computer_last_logon_90days.csv" -NoTypeInformation
+    $allgroupstable | Export-Csv "$pathsave\all_Groups.csv" -NoTypeInformation
+    $DomainAdminTable | Export-Csv "$pathsave\Domain-Admins.csv" -NoTypeInformation
+    $TableSubnet | Export-Csv "$pathsave\sites_subnetes.csv" -NoTypeInformation
+    $allOUTable | Export-Csv "$pathsave\All_Ous.csv" -NoTypeInformation
+    $emptyou | Export-Csv "$pathsave\empty_ous.csv" -NoTypeInformation
+    $allGPOTable | Export-Csv "$pathsave\All_GPOs.csv" -NoTypeInformation
+    $pwdfoundgpo | Export-Csv "$pathsave\pwd_found_GPO.csv" -NoTypeInformation
+    $ADUpdates | Export-Csv "$pathsave\ad_update_missing.csv" -NoTypeInformation
+    $userpwdnotrequired | Export-Csv "$pathsave\pwd_not_required.csv" -NoTypeInformation
+    $allSites | Export-Csv "$pathsave\Site.csv" -NoTypeInformation
+    $pwdPOLICY | Export-Csv "$pathsave\All_password_Policy.csv" -NoTypeInformation
+    $ResultHash | Export-Csv "$pathsave\weak_password.csv" -NoTypeInformation
+    $sharetable | Export-Csv "$pathsave\smb_share.csv" -NoTypeInformation
+    $gposcript | Export-Csv "$pathsave\script_logon.csv" -NoTypeInformation
+    $smb | Export-Csv "$pathsave\check_smb.csv" -NoTypeInformation
+    $adminsholder | Export-csv "$pathsave\AdminSDHolder.csv" -NoTypeInformation
+    $out | Export-csv "$PathSave\Backup_Status.csv" -NoTypeInformation
+    $ADTrust | Export-Csv "$PathSave\trust_relationship.csv" -NoTypeInformation
+    $ResultNTP | Export-Csv "$PathSave\TimeSync.csv" -NoTypeInformation
+    ################################################################################  
